@@ -1,34 +1,50 @@
 """
 RunPod Serverless Handler — Flux Kontext Watermark Remover
+Model downloads on first startup (~5 min), then stays cached.
 """
 
 import runpod
 import torch
 import base64
 import io
+import os
 from PIL import Image
-from diffusers import FluxKontextPipeline
 
-# --- Load model once at startup ---
-print("Loading Flux Kontext pipeline...")
-pipe = FluxKontextPipeline.from_pretrained(
-    "black-forest-labs/FLUX.1-Kontext-dev",
-    torch_dtype=torch.bfloat16,
-)
-pipe.to("cuda")
+pipe = None
 
-print("Loading Watermark Remover LoRA...")
-pipe.load_lora_weights(
-    "prithivMLmods/Kontext-Watermark-Remover",
-    weight_name="Kontext-Watermark-Remover.safetensors",
-    adapter_name="watermark_remover",
-)
-pipe.set_adapters(["watermark_remover"], adapter_weights=[1.0])
-print("Model ready!")
+
+def load_model():
+    """Load model once on worker startup."""
+    global pipe
+    if pipe is not None:
+        return
+
+    from diffusers import FluxKontextPipeline
+
+    token = os.environ.get("HF_TOKEN", "")
+
+    print("Downloading and loading Flux Kontext pipeline...")
+    pipe = FluxKontextPipeline.from_pretrained(
+        "black-forest-labs/FLUX.1-Kontext-dev",
+        torch_dtype=torch.bfloat16,
+        token=token,
+    )
+    pipe.to("cuda")
+
+    print("Loading Watermark Remover LoRA...")
+    pipe.load_lora_weights(
+        "prithivMLmods/Kontext-Watermark-Remover",
+        weight_name="Kontext-Watermark-Remover.safetensors",
+        adapter_name="watermark_remover",
+    )
+    pipe.set_adapters(["watermark_remover"], adapter_weights=[1.0])
+    print("Model ready!")
 
 
 def handler(job):
     """Process a single image: remove watermark."""
+    load_model()
+
     job_input = job["input"]
 
     # Get image from base64
